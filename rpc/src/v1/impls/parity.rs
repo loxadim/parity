@@ -36,6 +36,7 @@ use updater::{Service as UpdateService};
 use jsonrpc_core::Error;
 use jsonrpc_macros::Trailing;
 use v1::helpers::{errors, SigningQueue, SignerService, NetworkSettings};
+use v1::helpers::accounts::unwrap_provider;
 use v1::helpers::dispatch::DEFAULT_MAC;
 use v1::metadata::Metadata;
 use v1::traits::Parity;
@@ -60,7 +61,7 @@ pub struct ParityClient<C, M, S: ?Sized, U> where
 	sync: Weak<S>,
 	updater: Weak<U>,
 	net: Weak<ManageNetwork>,
-	accounts: Weak<AccountProvider>,
+	accounts: Option<Weak<AccountProvider>>,
 	logger: Arc<RotatingLogger>,
 	settings: Arc<NetworkSettings>,
 	signer: Option<Arc<SignerService>>,
@@ -81,7 +82,7 @@ impl<C, M, S: ?Sized, U> ParityClient<C, M, S, U> where
 		sync: &Arc<S>,
 		updater: &Arc<U>,
 		net: &Arc<ManageNetwork>,
-		store: &Arc<AccountProvider>,
+		store: &Option<Arc<AccountProvider>>,
 		logger: Arc<RotatingLogger>,
 		settings: Arc<NetworkSettings>,
 		signer: Option<Arc<SignerService>>,
@@ -94,13 +95,19 @@ impl<C, M, S: ?Sized, U> ParityClient<C, M, S, U> where
 			sync: Arc::downgrade(sync),
 			updater: Arc::downgrade(updater),
 			net: Arc::downgrade(net),
-			accounts: Arc::downgrade(store),
+			accounts: store.as_ref().map(Arc::downgrade),
 			logger: logger,
 			settings: settings,
 			signer: signer,
 			dapps_interface: dapps_interface,
 			dapps_port: dapps_port,
 		}
+	}
+
+	/// Attempt to get the `Arc<AccountProvider>`, errors if provider was not
+	/// set, or if upgrading the weak reference failed.
+	fn accounts(&self) -> Result<Arc<AccountProvider>, Error> {
+		unwrap_provider(&self.accounts)
 	}
 }
 
@@ -115,7 +122,7 @@ impl<C, M, S: ?Sized, U> Parity for ParityClient<C, M, S, U> where
 	fn accounts_info(&self, dapp: Trailing<DappId>) -> Result<BTreeMap<H160, AccountInfo>, Error> {
 		let dapp = dapp.0;
 
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 		let dapp_accounts = store
 			.note_dapp_used(dapp.clone().into())
 			.and_then(|_| store.dapp_addresses(dapp.into()))
@@ -135,7 +142,7 @@ impl<C, M, S: ?Sized, U> Parity for ParityClient<C, M, S, U> where
 	}
 
 	fn hardware_accounts_info(&self) -> Result<BTreeMap<H160, HwAccountInfo>, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 		let info = store.hardware_accounts_info().map_err(|e| errors::account("Could not fetch account info.", e))?;
 		Ok(info
 			.into_iter()
@@ -147,7 +154,7 @@ impl<C, M, S: ?Sized, U> Parity for ParityClient<C, M, S, U> where
 	fn default_account(&self, meta: Self::Metadata) -> BoxFuture<H160, Error> {
 		let dapp_id = meta.dapp_id();
 		future::ok(
-			take_weakf!(self.accounts)
+			try_bf!(self.accounts())
 				.dapp_default_address(dapp_id.into())
 				.map(Into::into)
 				.ok()

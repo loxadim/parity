@@ -414,7 +414,7 @@ pub fn execute(cmd: RunCmd, can_restart: bool, logger: Arc<RotatingLogger>) -> R
 		client: client.clone(),
 		sync: sync_provider.clone(),
 		net: manage_network.clone(),
-		secret_store: account_provider.clone(),
+		secret_store: Some(account_provider.clone()),
 		miner: miner.clone(),
 		external_miner: external_miner.clone(),
 		logger: logger.clone(),

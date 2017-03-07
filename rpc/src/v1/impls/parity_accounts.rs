@@ -24,26 +24,33 @@ use ethcore::account_provider::AccountProvider;
 
 use jsonrpc_core::Error;
 use v1::helpers::errors;
+use v1::helpers::accounts::unwrap_provider;
 use v1::traits::ParityAccounts;
 use v1::types::{H160 as RpcH160, H256 as RpcH256, DappId, Derive, DeriveHierarchical, DeriveHash};
 
 /// Account management (personal) rpc implementation.
 pub struct ParityAccountsClient {
-	accounts: Weak<AccountProvider>,
+	accounts: Option<Weak<AccountProvider>>,
 }
 
 impl ParityAccountsClient {
 	/// Creates new PersonalClient
-	pub fn new(store: &Arc<AccountProvider>) -> Self {
+	pub fn new(store: &Option<Arc<AccountProvider>>) -> Self {
 		ParityAccountsClient {
-			accounts: Arc::downgrade(store),
+			accounts: store.as_ref().map(Arc::downgrade),
 		}
+	}
+
+	/// Attempt to get the `Arc<AccountProvider>`, errors if provider was not
+	/// set, or if upgrading the weak reference failed.
+	fn accounts(&self) -> Result<Arc<AccountProvider>, Error> {
+		unwrap_provider(&self.accounts)
 	}
 }
 
 impl ParityAccounts for ParityAccountsClient {
 	fn all_accounts_info(&self) -> Result<BTreeMap<RpcH160, BTreeMap<String, String>>, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 		let info = store.accounts_info().map_err(|e| errors::account("Could not fetch account info.", e))?;
 		let other = store.addresses_info();
 
@@ -65,7 +72,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn new_account_from_phrase(&self, phrase: String, pass: String) -> Result<RpcH160, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		let brain = Brain::new(phrase).generate().unwrap();
 		store.insert_account(brain.secret().clone(), &pass)
@@ -74,7 +81,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn new_account_from_wallet(&self, json: String, pass: String) -> Result<RpcH160, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.import_presale(json.as_bytes(), &pass)
 			.or_else(|_| store.import_wallet(json.as_bytes(), &pass))
@@ -83,7 +90,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn new_account_from_secret(&self, secret: RpcH256, pass: String) -> Result<RpcH160, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		let secret = Secret::from_slice(&secret.0)
 			.map_err(|e| errors::account("Could not create account.", e))?;
@@ -95,14 +102,14 @@ impl ParityAccounts for ParityAccountsClient {
 	fn test_password(&self, account: RpcH160, password: String) -> Result<bool, Error> {
 		let account: Address = account.into();
 
-		take_weak!(self.accounts)
+		self.accounts()?
 			.test_password(&account, &password)
 			.map_err(|e| errors::account("Could not fetch account info.", e))
 	}
 
 	fn change_password(&self, account: RpcH160, password: String, new_password: String) -> Result<bool, Error> {
 		let account: Address = account.into();
-		take_weak!(self.accounts)
+		self.accounts()?
 			.change_password(&account, password, new_password)
 			.map(|_| true)
 			.map_err(|e| errors::account("Could not fetch account info.", e))
@@ -110,14 +117,14 @@ impl ParityAccounts for ParityAccountsClient {
 
 	fn kill_account(&self, account: RpcH160, password: String) -> Result<bool, Error> {
 		let account: Address = account.into();
-		take_weak!(self.accounts)
+		self.accounts()?
 			.kill_account(&account, &password)
 			.map(|_| true)
 			.map_err(|e| errors::account("Could not delete account.", e))
 	}
 
 	fn remove_address(&self, addr: RpcH160) -> Result<bool, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 		let addr: Address = addr.into();
 
 		store.remove_address(addr);
@@ -125,7 +132,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn set_account_name(&self, addr: RpcH160, name: String) -> Result<bool, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 		let addr: Address = addr.into();
 
 		store.set_account_name(addr.clone(), name.clone())
@@ -134,7 +141,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn set_account_meta(&self, addr: RpcH160, meta: String) -> Result<bool, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 		let addr: Address = addr.into();
 
 		store.set_account_meta(addr.clone(), meta.clone())
@@ -143,7 +150,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn set_dapp_addresses(&self, dapp: DappId, addresses: Option<Vec<RpcH160>>) -> Result<bool, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.set_dapp_addresses(dapp.into(), addresses.map(into_vec))
 			.map_err(|e| errors::account("Couldn't set dapp addresses.", e))
@@ -151,7 +158,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn dapp_addresses(&self, dapp: DappId) -> Result<Vec<RpcH160>, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.dapp_addresses(dapp.into())
 			.map_err(|e| errors::account("Couldn't get dapp addresses.", e))
@@ -159,7 +166,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn set_dapp_default_address(&self, dapp: DappId, address: RpcH160) -> Result<bool, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.set_dapp_default_address(dapp.into(), address.into())
 			.map_err(|e| errors::account("Couldn't set dapp default address.", e))
@@ -167,7 +174,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn dapp_default_address(&self, dapp: DappId) -> Result<RpcH160, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.dapp_default_address(dapp.into())
 			.map_err(|e| errors::account("Couldn't get dapp default address.", e))
@@ -175,7 +182,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn set_new_dapps_addresses(&self, addresses: Option<Vec<RpcH160>>) -> Result<bool, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store
 			.set_new_dapps_addresses(addresses.map(into_vec))
@@ -184,7 +191,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn new_dapps_addresses(&self) -> Result<Option<Vec<RpcH160>>, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.new_dapps_addresses()
 			.map_err(|e| errors::account("Couldn't get dapps addresses.", e))
@@ -192,7 +199,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn set_new_dapps_default_address(&self, address: RpcH160) -> Result<bool, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.set_new_dapps_default_address(address.into())
 			.map_err(|e| errors::account("Couldn't set new dapps default address.", e))
@@ -200,7 +207,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn new_dapps_default_address(&self) -> Result<RpcH160, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.new_dapps_default_address()
 			.map_err(|e| errors::account("Couldn't get new dapps default address.", e))
@@ -208,7 +215,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn recent_dapps(&self) -> Result<BTreeMap<DappId, u64>, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store.recent_dapps()
 			.map_err(|e| errors::account("Couldn't get recent dapps.", e))
@@ -216,7 +223,7 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn import_geth_accounts(&self, addresses: Vec<RpcH160>) -> Result<Vec<RpcH160>, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		store
 			.import_geth_accounts(into_vec(addresses), false)
@@ -225,66 +232,66 @@ impl ParityAccounts for ParityAccountsClient {
 	}
 
 	fn geth_accounts(&self) -> Result<Vec<RpcH160>, Error> {
-		let store = take_weak!(self.accounts);
+		let store = self.accounts()?;
 
 		Ok(into_vec(store.list_geth_accounts(false)))
 	}
 
 	fn create_vault(&self, name: String, password: String) -> Result<bool, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.create_vault(&name, &password)
 			.map_err(|e| errors::account("Could not create vault.", e))
 			.map(|_| true)
 	}
 
 	fn open_vault(&self, name: String, password: String) -> Result<bool, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.open_vault(&name, &password)
 			.map_err(|e| errors::account("Could not open vault.", e))
 			.map(|_| true)
 	}
 
 	fn close_vault(&self, name: String) -> Result<bool, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.close_vault(&name)
 			.map_err(|e| errors::account("Could not close vault.", e))
 			.map(|_| true)
 	}
 
 	fn list_vaults(&self) -> Result<Vec<String>, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.list_vaults()
 			.map_err(|e| errors::account("Could not list vaults.", e))
 	}
 
 	fn list_opened_vaults(&self) -> Result<Vec<String>, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.list_opened_vaults()
 			.map_err(|e| errors::account("Could not list vaults.", e))
 	}
 
 	fn change_vault_password(&self, name: String, new_password: String) -> Result<bool, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.change_vault_password(&name, &new_password)
 			.map_err(|e| errors::account("Could not change vault password.", e))
 			.map(|_| true)
 	}
 
 	fn change_vault(&self, address: RpcH160, new_vault: String) -> Result<bool, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.change_vault(address.into(), &new_vault)
 			.map_err(|e| errors::account("Could not change vault.", e))
 			.map(|_| true)
 	}
 
 	fn get_vault_meta(&self, name: String) -> Result<String, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.get_vault_meta(&name)
 			.map_err(|e| errors::account("Could not get vault metadata.", e))
 	}
 
 	fn set_vault_meta(&self, name: String, meta: String) -> Result<bool, Error> {
-		take_weak!(self.accounts)
+		self.accounts()?
 			.set_vault_meta(&name, &meta)
 			.map_err(|e| errors::account("Could not update vault metadata.", e))
 			.map(|_| true)
@@ -292,7 +299,7 @@ impl ParityAccounts for ParityAccountsClient {
 
 	fn derive_key_index(&self, addr: RpcH160, password: String, derivation: DeriveHierarchical, save_as_account: bool) -> Result<RpcH160, Error> {
 		let addr: Address = addr.into();
-		take_weak!(self.accounts)
+		self.accounts()?
 			.derive_account(
 				&addr,
 				Some(password),
@@ -305,7 +312,7 @@ impl ParityAccounts for ParityAccountsClient {
 
 	fn derive_key_hash(&self, addr: RpcH160, password: String, derivation: DeriveHash, save_as_account: bool) -> Result<RpcH160, Error> {
 		let addr: Address = addr.into();
-		take_weak!(self.accounts)
+		self.accounts()?
 			.derive_account(
 				&addr,
 				Some(password),
